@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<title>Mesh viewer</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link rel="stylesheet" href="../../style/main.css">
+</head>
+
+<body>
+	<div id="info">
+		<input type="file" id="fileInput" style="visibility:hidden">
+	</div>
+	<div id="info">
+		<h2>Mesh viewer</h2>
+	</div>
+
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/87/three.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.6.5/dat.gui.min.js"></script>
+	<script src="./detector.js"></script>
+	<script src="./trackball-controls.js"></script>
+	<script src="./vector.js"></script>
+	<script src="./mesh.js"></script>
+	<script src="./IO.js"></script>
+	<script>
+		if (!Detector.webgl) Detector.addGetWebGLMessage();
+
+		let input = document.getElementById("fileInput");
+		let renderer = undefined;
+		let camera = undefined;
+		let controls = undefined;
+		
+		let showWireframe = false;
+		let scene = undefined;
+		let threeMesh = undefined;
+		let threeGeometry = undefined;
+		
+		let wireframe = undefined;
+		let materialSettings = {
+			vertexColors: THREE.VertexColors,
+			polygonOffset: true,
+			polygonOffsetFactor: 1,
+			polygonOffsetUnits: 1,
+			side: THREE.DoubleSide
+		};
+
+		let positions = undefined;
+		let colors = undefined;
+		let indices = undefined;
+		
+		let mesh = undefined;
+
+		let filename = "bunny.obj";
+
+		const ORANGE = new Vector(1.0, 0.5, 0.0);
+		let guiFields = {
+			"Load Mesh": function() {
+				input.click();
+			},
+			"Plot": "Shaded",
+			"Show Wireframe": showWireframe
+		};
+
+		init();
+		animate();
+
+		function init() {
+			let container = document.createElement("div");
+			document.body.appendChild(container);
+
+			initRenderer(container);
+			initGUI();
+			initCamera();
+			initScene();
+			initLights();
+			initControls();
+			addEventListeners();
+		}
+
+		function initRenderer(container) {
+			renderer = new THREE.WebGLRenderer({
+				antialias: true
+			});
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			container.appendChild(renderer.domElement);
+		}
+
+		function initGUI() {
+			let gui = new dat.GUI();
+
+			let io = gui.addFolder("IO");
+			io.add(guiFields, "Load Mesh");
+			io.open();
+			
+			gui.add(guiFields, "Show Wireframe").onChange(toggleWireframe).listen();
+		}
+
+		window.onload = function() {
+			input.addEventListener("change", function(e) {
+				let file = input.files[0];
+				filename = file.name;
+
+				if (filename.endsWith(".obj")) {
+					let reader = new FileReader();
+					reader.onload = function(e) {
+						initMesh(reader.result);
+					}
+
+					reader.onerror = function(e) {
+						alert("Unable to load OBJ file");
+					}
+
+					reader.readAsText(file);
+
+				} else {
+					alert("Please load an OBJ file");
+				}
+			});
+		}
+
+		function exportFile(text) {
+			let element = document.createElement("a");
+			element.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(text));
+			element.setAttribute("download", filename);
+
+			element.style.display = "none";
+			document.body.appendChild(element);
+
+			element.click();
+
+			document.body.removeChild(element);
+		}
+
+
+
+		function updatePlot(value) {
+
+			//threeMesh.material = new THREE.MeshBasicMaterial(materialSettings);
+		        //threeGeometry.attributes.color.needsUpdate = true;
+		}
+
+		function toggleWireframe(checked) {
+			showWireframe = checked;
+			if (showWireframe) threeMesh.add(wireframe);
+			else threeMesh.remove(wireframe);
+		}
+
+		function initCamera() {
+			const fov = 45.0;
+			const aspect = window.innerWidth / window.innerHeight;
+			const near = 0.1;
+			const far = 1000;
+			const eyeZ = 3.5;
+
+			camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+			camera.position.z = eyeZ;
+		}
+
+		function initScene() {
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0xffffff);
+		}
+
+		function initLights() {
+			let ambient = new THREE.AmbientLight(0xffffff, 0.35);
+			camera.add(ambient);
+
+			let point = new THREE.PointLight(0xffffff);
+			point.position.set(2, 20, 15);
+			camera.add(point);
+
+			scene.add(camera);
+		}
+
+		function initMesh(text) {
+			mesh = readOBJ(text);
+
+		        mesh.computeBoundaryEdges();
+			
+			scene.remove(threeMesh);
+			
+			// create a THREE.js mesh (and geometry) object
+			initThreeMesh();
+			scene.add(threeMesh);
+
+		}
+
+		function initThreeMesh() {
+			// create geometry object
+			threeGeometry = new THREE.BufferGeometry();
+
+			// fill position, normal and color buffers
+			let V = mesh.vertices.length;
+			positions = new Float32Array(V * 3);
+			colors = new Float32Array(V * 3);
+
+			for (let i=0; i<V; i++) {
+
+				let position = mesh.vertices[i];
+				positions[3 * i + 0] = position.x;
+				positions[3 * i + 1] = position.y;
+				positions[3 * i + 2] = position.z;
+
+				colors[3 * i + 0] = ORANGE.x;
+				colors[3 * i + 1] = ORANGE.y;
+				colors[3 * i + 2] = ORANGE.z;
+			}
+
+			// fill index buffer
+			let F = mesh.faces.length;
+			indices = new Uint32Array(F * 3);
+			for (let i=0; i<F; i++) {
+			        let face = mesh.faces[i];
+				indices[3*i+0] = face.v0;
+				indices[3*i+1] = face.v1;
+				indices[3*i+2] = face.v2;
+			}
+
+			// set geometry
+			threeGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
+			threeGeometry.addAttribute("position", new THREE.BufferAttribute(positions, 3));
+			threeGeometry.addAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+			// create material
+			let threeMaterial = new THREE.MeshPhongMaterial(materialSettings);
+
+			// create wireframe
+			wireframe = new THREE.LineSegments();
+			wireframe.geometry = new THREE.WireframeGeometry(threeGeometry);
+			wireframe.material = new THREE.LineBasicMaterial({
+				color: 0x000000,
+				linewidth: 0.75
+			});
+
+			// create mesh
+			threeMesh = new THREE.Mesh(threeGeometry, threeMaterial);
+
+			toggleWireframe(showWireframe);
+		}
+
+		function initControls() {
+			controls = new THREE.TrackballControls(camera, renderer.domElement);
+			controls.rotateSpeed = 5.0;
+		}
+
+		function addEventListeners() {
+			window.addEventListener("resize", onWindowResize, false);
+		}
+
+		function onWindowResize() {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			controls.handleResize();
+			render();
+		}
+
+		function animate() {
+			requestAnimationFrame(animate);
+			controls.update();
+			render();
+		}
+
+		function render() {
+			renderer.render(scene, camera);
+		}
+	</script>
+</body>
+
+</html>
